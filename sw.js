@@ -1,5 +1,5 @@
 // Offline cache for the JC Register. Bump VERSION when app files change.
-const VERSION="jcr-v1";
+const VERSION="jcr-v2";
 const SHELL=["./","index.html","app.js","xlsx.full.min.js","manifest.webmanifest","icons/icon-192.png","icons/icon-512.png","icons/apple-touch-icon.png"];
 self.addEventListener("install",e=>{e.waitUntil(caches.open(VERSION).then(c=>c.addAll(SHELL.concat(["data.enc"]))));self.skipWaiting()});
 self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!=VERSION).map(k=>caches.delete(k)))));self.clients.claim()});

@@ -160,6 +160,17 @@ details.more summary{cursor:pointer;color:var(--accent);font-size:13px}
 .lockbox label.chk{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--muted)}
 .err{color:var(--accent);font-size:13px;min-height:1em;margin:0}
 .built{font-size:12px;color:var(--bar-muted);white-space:nowrap}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:transparent;padding:7px 12px;font-weight:600;color:var(--muted)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 14px;max-width:980px}
+.stats>div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 14px;display:flex;flex-direction:column;min-width:120px}
+.stats b{font-size:20px}.stats span{font-size:12px;color:var(--muted)}
+.rrow{cursor:pointer}.rrow:hover td{background:var(--sunk)}
+.recentbtn{border-left:3px solid var(--accent)!important;background:var(--surface)!important;margin-bottom:6px}
+.recentbtn .c{color:var(--accent)}
+td.num{white-space:nowrap}
 </style>
 </head><body>
 <div class="lock" id="lock"><form class="lockbox" id="lockForm">

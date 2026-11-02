@@ -1,6 +1,6 @@
 /* Middelburg International JC Register — offline, read-only copy.
    Data lives in data.enc (AES-GCM, key from the shared password via PBKDF2). */
-const S={machines:{},list:[],client:null,curId:null,tab:"basic",q:""};
+const S={machines:{},list:[],client:null,curId:null,tab:"basic",q:"",view:"main",days:30,backTo:null};
 const LIST_MAX=150,METER={hours:"URE",ha:"HA",bales:"BALES",km:"KM"};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -30,7 +30,7 @@ async function unlock(pw,remember){
     const d=await decrypt(pw);
     if(remember)store.set("jcr-pw",pw);else store.del("jcr-pw");
     S.built=d.built;d.machines.forEach(m=>S.machines[m._id]=m);
-    S.list=d.machines.map(m=>({id:m._id,c:m.customer||"",i:m.item||"",s:m.serial||"",r:m.reg||"",sold:!!m.sold,in:!!m.inactive,n:m.jobs.length,j:m.jobs.map(j=>j.jc).filter(x=>x!=null),f:(m.folders||[]).join(" ")}));
+    S.list=d.machines.map(m=>({id:m._id,c:m.customer||"",i:m.item||"",s:m.serial||"",r:m.reg||"",sold:!!m.sold,in:!!m.inactive,n:m.jobs.length,j:m.jobs.map(j=>j.jc).filter(x=>x!=null),f:(m.folders||[]).join(" "),rc:recentOf(m)}));
     $("lock").hidden=true;$("app").hidden=false;$("built").textContent="Data as at "+fmtD(d.built);render();
   }catch(e){
     $("lockErr").textContent=e.message=="badpw"?"That password didn't work. Check it and try again.":"Couldn't load the data. Connect to the internet once, then try again.";
@@ -51,6 +51,27 @@ function hourFlags(jobs){
   const out={};idx.forEach(i=>{if(!keep.has(i))out[i]="Out of sequence"});return out;
 }
 
+/* ---------- recently added ---------- */
+const isoDay=d=>{const z=new Date(d.getTime()-d.getTimezoneOffset()*60000);return z.toISOString().slice(0,10)};
+const todayISO=()=>isoDay(new Date());
+const daysAgoISO=n=>isoDay(new Date(Date.now()-n*86400000));
+function recentOf(m){const lim=daysAgoISO(120),td=todayISO();
+  return (m.jobs||[]).filter(j=>j.date&&j.date>=lim&&j.date<=td).map(j=>({jc:j.jc,d:j.date,t:(j.details||[]).join("; ").slice(0,90),h:j.hours??null,tot:j.detail?.totals?.total??null}))}
+function recentCount(rows,days){const lim=daysAgoISO(days),td=todayISO();return rows.filter(r=>r.d>=lim&&r.d<=td).length}
+function recentHTML(rows,days){
+  const lim=daysAgoISO(days),td=todayISO();
+  const list=rows.filter(r=>r.d>=lim&&r.d<=td).sort((a,b)=>a.d<b.d?1:a.d>b.d?-1:(+b.jc||0)-(+a.jc||0));
+  const total=r2(list.reduce((s,r)=>s+(num(r.tot)||0),0)),withTot=list.filter(r=>num(r.tot)!=null).length;
+  return `<button class="btn ghost back" data-act="back">← Back</button>
+  <div class="titlerow"><div><h1>Recently added</h1><div class="sub">Job cards dated in the last ${days} days, newest first.</div></div>
+   <div class="seg" role="group" aria-label="Period">${[30,60,90].map(d=>`<button data-act="days" data-d="${d}" aria-pressed="${d==days}">${d} days</button>`).join("")}</div></div>
+  <div class="stats"><div><b class="num">${list.length}</b><span>job cards</span></div><div><b class="num">${new Set(list.map(r=>r.c)).size}</b><span>clients</span></div>${withTot?`<div><b class="num">${fmtR(total)}</b><span>invoiced on ${withTot} card${withTot==1?"":"s"} with detail</span></div>`:""}</div>
+  ${list.length?`<div class="tablebox" style="border-top:1px solid var(--line);border-radius:8px"><table><thead><tr><th>DATUM</th><th>J/C</th><th>KLIENT</th><th>MASJIEN</th><th>BESONDERHEDE</th><th class="r">URE</th><th class="r">TOTAAL</th></tr></thead><tbody>
+   ${list.map(r=>`<tr class="rrow" data-m="${esc(r.id)}" tabindex="0"><td class="num">${fmtD(r.d)}</td><td class="num">${esc(r.jc??"—")}</td><td><b>${esc(r.c)}</b></td><td>${esc(r.i)}</td><td>${esc(r.t)}</td><td class="r num">${r.h!=null?fmtH(r.h):""}</td><td class="r num">${num(r.tot)!=null?fmtR(r.tot):""}</td></tr>`).join("")}
+  </tbody></table></div>`:`<div class="empty"><h2>Nothing in the last ${days} days</h2><p>Job cards appear here once they're filed with a date in this period. Try a longer period.</p></div>`}`;
+}
+
+function recentRows(){return S.list.flatMap(e=>e.rc.map(r=>({...r,id:e.id,c:e.c,i:e.i})))}
 /* ---------- side list ---------- */
 function clients(){const g={};for(const e of S.list)(g[e.c]=g[e.c]||[]).push(e);return Object.keys(g).sort((a,b)=>a.localeCompare(b)).map(c=>({c,ms:g[c]}))}
 function search(q){
@@ -76,16 +97,17 @@ function renderSide(){
     lab.innerHTML=`<button class="btn ghost" data-act="clients" style="padding:4px 6px;margin:-4px 0 4px -6px;text-transform:none;letter-spacing:0;font-size:13px">← All clients</button>`;
     L.innerHTML=`<li style="padding:2px 10px 8px"><div class="c" style="font-family:var(--display);font-weight:700;font-size:20px;text-transform:uppercase;line-height:1.1">${esc(S.client)}</div><div class="s" style="color:var(--muted);font-size:12px">${ms.length} machine${ms.length==1?"":"s"}</div></li>`+ms.map(e=>row(e,null,false)).join("");
   }else{
-    const cl=clients();let last="";lab.textContent=`${cl.length} clients · ${S.list.length} machines`;
-    L.innerHTML=cl.map(x=>{const ch=/[A-Z]/.test(x.c[0]||"")?x.c[0]:"#",head=ch!=last?`<li class="label" style="padding:10px 10px 2px">${ch}</li>`:"";last=ch;const act=x.ms.filter(e=>!e.sold&&!e.in).length;
+    const cl=clients(),rn=recentCount(recentRows(),30);let last="";lab.textContent=`${cl.length} clients · ${S.list.length} machines`;
+    L.innerHTML=`<li><button class="recentbtn" data-act="recent" aria-current="${S.view=="recent"}"><span class="c">Recently added</span><span class="s">${rn} job card${rn==1?"":"s"} in the last 30 days</span></button></li>`+cl.map(x=>{const ch=/[A-Z]/.test(x.c[0]||"")?x.c[0]:"#",head=ch!=last?`<li class="label" style="padding:10px 10px 2px">${ch}</li>`:"";last=ch;const act=x.ms.filter(e=>!e.sold&&!e.in).length;
       return head+`<li><button data-client="${esc(x.c)}"><span class="c">${esc(x.c)}</span><span class="s">${x.ms.length} machine${x.ms.length==1?"":"s"}${act!=x.ms.length?` · ${act} active`:""}</span></button></li>`}).join("");
   }
-  $("wrap").classList.toggle("has-sel",!!S.curId);
+  $("wrap").classList.toggle("has-sel",!!S.curId||S.view=="recent");
 }
 
 /* ---------- machine ---------- */
 function renderMain(){
   const m=S.machines[S.curId];
+  if(!m&&(S.view=="recent"||!S.client)){$("main").innerHTML=recentHTML(recentRows(),S.days);return}
   if(!m){$("main").innerHTML=S.client?`<div class="empty"><h2>${esc(S.client)}</h2><p>Pick one of this client's machines on the left to see its job card history.</p></div>`:`<div class="empty"><h2>Pick a client</h2><p>Choose a client on the left, then one of their machines. You can also search by client, model, serial number or job card number.</p></div>`;return}
   const jobs=sortedJobs(m),hf=hourFlags(jobs),unit=METER[m.meter]||"URE",others=(m.alsoUnder||[]).filter(id=>S.machines[id]);
   let html=`<button class="btn ghost back" data-act="back">← Back</button>
@@ -132,13 +154,14 @@ function exportOne(m){if(!window.XLSX)return toast("Excel export isn't available
 /* ---------- events ---------- */
 $("q").addEventListener("input",e=>{S.q=e.target.value;renderSide()});
 document.addEventListener("click",e=>{
-  const cb=e.target.closest("[data-client]");if(cb){S.client=cb.dataset.client;S.q="";$("q").value="";renderSide();$("side").scrollTop=0;if(!S.curId)renderMain();return}
-  const mb=e.target.closest("[data-m]");if(mb){e.preventDefault();S.curId=mb.dataset.m;S.client=S.machines[S.curId].customer;S.q="";$("q").value="";render();window.scrollTo(0,0);return}
+  const cb=e.target.closest("[data-client]");if(cb){S.view="main";S.client=cb.dataset.client;S.q="";$("q").value="";renderSide();$("side").scrollTop=0;if(!S.curId)renderMain();return}
+  const mb=e.target.closest("[data-m]");if(mb){e.preventDefault();S.backTo=(S.view=="recent"||(!S.curId&&!S.client))?"recent":null;S.view="main";S.curId=mb.dataset.m;S.client=S.machines[S.curId].customer;S.q="";$("q").value="";render();window.scrollTo(0,0);return}
   const tb=e.target.closest("[data-tab]");if(tb){S.tab=tb.dataset.tab;renderMain();return}
   const a=e.target.closest("[data-act]");if(!a)return;
-  ({clients:()=>{S.client=null;renderSide();if(!S.curId)renderMain()},back:()=>{S.curId=null;render()},export:()=>exportOne(S.machines[S.curId])})[a.dataset.act]?.();
+  ({recent:()=>{S.view="recent";S.curId=null;S.client=null;S.q="";$("q").value="";render();window.scrollTo(0,0)},days:()=>{S.days=+a.dataset.d;renderMain()},clients:()=>{S.client=null;renderSide();if(!S.curId)renderMain()},back:()=>{const wasRecent=S.view=="recent";S.curId=null;S.view=(!wasRecent&&S.backTo=="recent")?"recent":"main";S.backTo=null;render()},export:()=>exportOne(S.machines[S.curId])})[a.dataset.act]?.();
 });
 
+document.addEventListener("keydown",e=>{if(e.key=="Enter"&&e.target.classList?.contains("rrow"))e.target.click()});
 /* ---------- boot ---------- */
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 const saved=store.get("jcr-pw");if(saved){$("remember").checked=true;unlock(saved,true)}else $("pw").focus();
