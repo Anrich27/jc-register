@@ -55,20 +55,23 @@ function hourFlags(jobs){
 const isoDay=d=>{const z=new Date(d.getTime()-d.getTimezoneOffset()*60000);return z.toISOString().slice(0,10)};
 const todayISO=()=>isoDay(new Date());
 const daysAgoISO=n=>isoDay(new Date(Date.now()-n*86400000));
+/* "added" = the day the card was filed in the register; older rows without a filed date fall back to the card date */
+const addedOn=j=>{const t=j.approvedAt||j.addedAt;return t?isoDay(new Date(t)):null};
+const addedKey=r=>r.a||r.d||"";
 function recentOf(m){const lim=daysAgoISO(120),td=todayISO();
-  return (m.jobs||[]).filter(j=>j.date&&j.date>=lim&&j.date<=td).map(j=>({jc:j.jc,d:j.date,t:(j.details||[]).join("; ").slice(0,90),h:j.hours??null,tot:j.detail?.totals?.total??null}))}
-function recentCount(rows,days){const lim=daysAgoISO(days),td=todayISO();return rows.filter(r=>r.d>=lim&&r.d<=td).length}
+  return (m.jobs||[]).map(j=>[j,addedOn(j)]).filter(([j,a])=>a?a>=lim:(j.date&&j.date>=lim&&j.date<=td)).map(([j,a])=>({jc:j.jc,d:j.date||null,a,t:(j.details||[]).join("; ").slice(0,90),h:j.hours??null,tot:j.detail?.totals?.total??null}))}
+function recentCount(rows,days){const lim=daysAgoISO(days),td=todayISO();return rows.filter(r=>addedKey(r)>=lim&&addedKey(r)<=td).length}
 function recentHTML(rows,days){
   const lim=daysAgoISO(days),td=todayISO();
-  const list=rows.filter(r=>r.d>=lim&&r.d<=td).sort((a,b)=>a.d<b.d?1:a.d>b.d?-1:(+b.jc||0)-(+a.jc||0));
+  const list=rows.filter(r=>addedKey(r)>=lim&&addedKey(r)<=td).sort((a,b)=>{const x=addedKey(a),y=addedKey(b);if(x!=y)return x<y?1:-1;const p=a.d||"",q=b.d||"";return p<q?1:p>q?-1:(+b.jc||0)-(+a.jc||0)});
   const total=r2(list.reduce((s,r)=>s+(num(r.tot)||0),0)),withTot=list.filter(r=>num(r.tot)!=null).length;
   return `<button class="btn ghost back" data-act="back">← Back</button>
-  <div class="titlerow"><div><h1>Recently added</h1><div class="sub">Job cards dated in the last ${days} days, newest first.</div></div>
+  <div class="titlerow"><div><h1>Recently added</h1><div class="sub">Job cards filed in the register in the last ${days} days, newest first. DATUM is the date on the card.</div></div>
    <div class="seg" role="group" aria-label="Period">${[30,60,90].map(d=>`<button data-act="days" data-d="${d}" aria-pressed="${d==days}">${d} days</button>`).join("")}</div></div>
   <div class="stats"><div><b class="num">${list.length}</b><span>job cards</span></div><div><b class="num">${new Set(list.map(r=>r.c)).size}</b><span>clients</span></div>${withTot?`<div><b class="num">${fmtR(total)}</b><span>invoiced on ${withTot} card${withTot==1?"":"s"} with detail</span></div>`:""}</div>
-  ${list.length?`<div class="tablebox" style="border-top:1px solid var(--line);border-radius:8px"><table><thead><tr><th>DATUM</th><th>J/C</th><th>KLIENT</th><th>MASJIEN</th><th>BESONDERHEDE</th><th class="r">URE</th><th class="r">TOTAAL</th></tr></thead><tbody>
-   ${list.map(r=>`<tr class="rrow" data-m="${esc(r.id)}" tabindex="0"><td class="num">${fmtD(r.d)}</td><td class="num">${esc(r.jc??"—")}</td><td><b>${esc(r.c)}</b></td><td>${esc(r.i)}</td><td>${esc(r.t)}</td><td class="r num">${r.h!=null?fmtH(r.h):""}</td><td class="r num">${num(r.tot)!=null?fmtR(r.tot):""}</td></tr>`).join("")}
-  </tbody></table></div>`:`<div class="empty"><h2>Nothing in the last ${days} days</h2><p>Job cards appear here once they're filed with a date in this period. Try a longer period.</p></div>`}`;
+  ${list.length?`<div class="tablebox" style="border-top:1px solid var(--line);border-radius:8px"><table><thead><tr><th>GELAAI</th><th>DATUM</th><th>J/C</th><th>KLIENT</th><th>MASJIEN</th><th>BESONDERHEDE</th><th class="r">URE</th><th class="r">TOTAAL</th></tr></thead><tbody>
+   ${list.map(r=>`<tr class="rrow" data-m="${esc(r.id)}" tabindex="0"><td class="num">${fmtD(addedKey(r))}</td><td class="num">${r.d?fmtD(r.d):"—"}</td><td class="num">${esc(r.jc??"—")}</td><td><b>${esc(r.c)}</b></td><td>${esc(r.i)}</td><td>${esc(r.t)}</td><td class="r num">${r.h!=null?fmtH(r.h):""}</td><td class="r num">${num(r.tot)!=null?fmtR(r.tot):""}</td></tr>`).join("")}
+  </tbody></table></div>`:`<div class="empty"><h2>Nothing in the last ${days} days</h2><p>Job cards appear here once they're filed in the register. Try a longer period.</p></div>`}`;
 }
 
 function recentRows(){return S.list.flatMap(e=>e.rc.map(r=>({...r,id:e.id,c:e.c,i:e.i})))}
