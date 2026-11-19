@@ -29,7 +29,7 @@ async function unlock(pw,remember){
   try{
     const d=await decrypt(pw);
     if(remember)store.set("jcr-pw",pw);else store.del("jcr-pw");
-    S.built=d.built;d.machines.forEach(m=>S.machines[m._id]=m);
+    S.built=d.built;d.machines.forEach(m=>S.machines[m._id]=m);svcRecalc();
     S.list=d.machines.map(m=>({id:m._id,c:m.customer||"",i:m.item||"",s:m.serial||"",r:m.reg||"",sold:!!m.sold,in:!!m.inactive,n:m.jobs.length,j:m.jobs.map(j=>j.jc).filter(x=>x!=null),f:(m.folders||[]).join(" "),rc:recentOf(m)}));
     $("lock").hidden=true;$("app").hidden=false;$("built").textContent="Data as at "+fmtD(d.built);render();
   }catch(e){
@@ -101,23 +101,26 @@ function renderSide(){
     L.innerHTML=`<li style="padding:2px 10px 8px"><div class="c" style="font-family:var(--display);font-weight:700;font-size:20px;text-transform:uppercase;line-height:1.1">${esc(S.client)}</div><div class="s" style="color:var(--muted);font-size:12px">${ms.length} machine${ms.length==1?"":"s"}</div></li>`+ms.map(e=>row(e,null,false)).join("");
   }else{
     const cl=clients(),rn=recentCount(recentRows(),30);let last="";lab.textContent=`${cl.length} clients · ${S.list.length} machines`;
-    L.innerHTML=`<li><button class="recentbtn" data-act="recent" aria-current="${S.view=="recent"}"><span class="c">Recently added</span><span class="s">${rn} job card${rn==1?"":"s"} in the last 30 days</span></button></li>`+cl.map(x=>{const ch=/[A-Z]/.test(x.c[0]||"")?x.c[0]:"#",head=ch!=last?`<li class="label" style="padding:10px 10px 2px">${ch}</li>`:"";last=ch;const act=x.ms.filter(e=>!e.sold&&!e.in).length;
+    const sd=(SVC.rows||[]).filter(r=>!r.stale&&r.rank<=1).length;
+    L.innerHTML=`<li><button class="recentbtn" data-act="recent" aria-current="${S.view=="recent"}"><span class="c">Recently added</span><span class="s">${rn} job card${rn==1?"":"s"} in the last 30 days</span></button></li><li><button class="recentbtn" data-act="service" aria-current="${S.view=="service"}"><span class="c">Service register</span><span class="s">${sd} machine${sd==1?"":"s"} due now or within 30 days</span></button></li>`+cl.map(x=>{const ch=/[A-Z]/.test(x.c[0]||"")?x.c[0]:"#",head=ch!=last?`<li class="label" style="padding:10px 10px 2px">${ch}</li>`:"";last=ch;const act=x.ms.filter(e=>!e.sold&&!e.in).length;
       return head+`<li><button data-client="${esc(x.c)}"><span class="c">${esc(x.c)}</span><span class="s">${x.ms.length} machine${x.ms.length==1?"":"s"}${act!=x.ms.length?` · ${act} active`:""}</span></button></li>`}).join("");
   }
-  $("wrap").classList.toggle("has-sel",!!S.curId||S.view=="recent");
+  $("wrap").classList.toggle("has-sel",!!S.curId||S.view=="recent"||S.view=="service");
 }
 
 /* ---------- machine ---------- */
 function renderMain(){
   const m=S.machines[S.curId];
+  if(!m&&S.view=="service"){$("main").innerHTML=svcHTML();return}
   if(!m&&(S.view=="recent"||!S.client)){$("main").innerHTML=recentHTML(recentRows(),S.days);return}
   if(!m){$("main").innerHTML=S.client?`<div class="empty"><h2>${esc(S.client)}</h2><p>Pick one of this client's machines on the left to see its job card history.</p></div>`:`<div class="empty"><h2>Pick a client</h2><p>Choose a client on the left, then one of their machines. You can also search by client, model, serial number or job card number.</p></div>`;return}
   const jobs=sortedJobs(m),hf=hourFlags(jobs),unit=METER[m.meter]||"URE",others=(m.alsoUnder||[]).filter(id=>S.machines[id]);
-  let html=`<button class="btn ghost back" data-act="back">← Back</button>
+  let html=`<button class="btn ghost back${S.backTo=="service"?" keep":""}" data-act="back">${S.backTo=="service"?"← Service register":"← Back"}</button>
   <div class="titlerow"><div><h1>${esc(m.customer)}</h1><div class="sub">${esc(m.item)} · ${jobs.length} job card${jobs.length==1?"":"s"}${m.sold?` · <span class="chip src">In a SOLD folder</span>`:""}${m.inactive?` · <span class="chip src">Inactive</span>`:""}</div></div>
    <div class="bar"><button class="btn" data-act="export">Download Excel sheet</button></div></div>
   <dl class="sheethead"><dt>KLIENT</dt><dd>${esc(m.customer)}</dd><dt>ITEM</dt><dd>${esc(m.item)}${m.reg?` <span class="num" style="color:var(--muted);font-weight:500">&nbsp; ${esc(m.reg)}</span>`:""}</dd>
    <dt>S/N</dt><dd class="num">${esc(m.serial||"—")}</dd><dt>AANGEKOOP</dt><dd class="num">${esc(m.purchased||"—")}</dd>${(m.notes||[]).length?`<dt>NOTA</dt><dd>${m.notes.map(esc).join("<br>")}</dd>`:""}</dl>
+  ${svcMachineBox(m)}
   ${others.length?`<p class="note">Same serial also on file under ${others.map(id=>`<a href="#" data-m="${esc(id)}">${esc(S.machines[id].customer)}${S.machines[id].sold?" (sold)":""}</a>`).join(", ")}.</p>`:""}
   <div class="tabs" role="tablist"><button role="tab" data-tab="basic" aria-selected="${S.tab=="basic"}">Werkkaarte</button><button role="tab" data-tab="detail" aria-selected="${S.tab=="detail"}">Detail</button></div>`;
   if(S.tab=="basic"){
@@ -158,13 +161,18 @@ function exportOne(m){if(!window.XLSX)return toast("Excel export isn't available
 $("q").addEventListener("input",e=>{S.q=e.target.value;renderSide()});
 document.addEventListener("click",e=>{
   const cb=e.target.closest("[data-client]");if(cb){S.view="main";S.client=cb.dataset.client;S.q="";$("q").value="";renderSide();$("side").scrollTop=0;if(!S.curId)renderMain();return}
-  const mb=e.target.closest("[data-m]");if(mb){e.preventDefault();S.backTo=(S.view=="recent"||(!S.curId&&!S.client))?"recent":null;S.view="main";S.curId=mb.dataset.m;S.client=S.machines[S.curId].customer;S.q="";$("q").value="";render();window.scrollTo(0,0);return}
+  const mb=e.target.closest("[data-m]");if(mb){e.preventDefault();S.backTo=S.view=="service"&&!S.curId?"service":(S.view=="recent"||(!S.curId&&!S.client))?"recent":null;S.view="main";S.curId=mb.dataset.m;S.client=S.machines[S.curId].customer;S.q="";$("q").value="";render();window.scrollTo(0,0);return}
   const tb=e.target.closest("[data-tab]");if(tb){S.tab=tb.dataset.tab;renderMain();return}
   const a=e.target.closest("[data-act]");if(!a)return;
-  ({recent:()=>{S.view="recent";S.curId=null;S.client=null;S.q="";$("q").value="";render();window.scrollTo(0,0)},days:()=>{S.days=+a.dataset.d;renderMain()},clients:()=>{S.client=null;renderSide();if(!S.curId)renderMain()},back:()=>{const wasRecent=S.view=="recent";S.curId=null;S.view=(!wasRecent&&S.backTo=="recent")?"recent":"main";S.backTo=null;render()},export:()=>exportOne(S.machines[S.curId])})[a.dataset.act]?.();
+  ({recent:()=>{S.view="recent";S.curId=null;S.client=null;S.q="";$("q").value="";render();window.scrollTo(0,0)},days:()=>{S.days=+a.dataset.d;renderMain()},clients:()=>{S.client=null;renderSide();if(!S.curId)renderMain()},back:()=>{const was=S.view;S.curId=null;S.view=(S.curId===null&&S.backTo&&was=="main")?S.backTo:"main";S.backTo=null;render();window.scrollTo(0,0)},service:()=>{S.view="service";S.curId=null;S.client=null;S.q="";$("q").value="";render();window.scrollTo(0,0)},export:()=>exportOne(S.machines[S.curId])})[a.dataset.act]?.();
 });
 
 document.addEventListener("keydown",e=>{if(e.key=="Enter"&&e.target.classList?.contains("rrow"))e.target.click()});
 /* ---------- boot ---------- */
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 const saved=store.get("jcr-pw");if(saved){$("remember").checked=true;unlock(saved,true)}else $("pw").focus();
+
+/* ---------- service register hooks ---------- */
+function svcRecalc(){svRefresh(Object.values(S.machines))}
+function svcRender(){if(S.view=="service"&&!S.curId)renderMain()}
+function svcSave(wb,name){XLSX.writeFile(wb,name)}

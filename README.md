@@ -6,4 +6,4 @@ Read-only, offline copy of the job card register for iPhone, Android and the web
 - New cards, edits and the review queue stay in the Claude register. After each batch, replace `data.enc` here with the new one.
 - Works offline after it has been opened once online.
 
-Files: `index.html`, `app.js` (the app), `data.enc` (encrypted data), `sw.js` (offline cache), `manifest.webmanifest` and `icons/` (home-screen icon), `xlsx.full.min.js` (Excel export).
+Files: `index.html`, `app.js` (the app), `service.js` (service & warranty register, worked out from the job cards — keep identical to the copy in the Claude register), `data.enc` (encrypted data), `sw.js` (offline cache), `manifest.webmanifest` and `icons/` (home-screen icon), `xlsx.full.min.js` (Excel export).
