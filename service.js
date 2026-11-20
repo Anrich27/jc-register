@@ -43,7 +43,8 @@ function svBuild(machines){
       if(span>=45&&lastR.h>f.h)rate=(lastR.h-f.h)/span;
       else if(reads.length>1){const f2=reads[0],s2=svDay(lastR.d)-svDay(f2.d);if(s2>=45&&lastR.h>f2.h)rate=(lastR.h-f2.h)/s2}}
     const seen=lastR?today-svDay(lastR.d):null,est=lastR?Math.round(lastR.h+(rate||0)*Math.min(seen,730)):null;
-    const step=SVC_STEP,base=lastIv?lastIv.iv:null;
+    /* count from the hours the service was actually done at, if a late service went past its interval (e.g. 250 h service done at 320 h) */
+    const step=SVC_STEP,base=lastIv?(lastIv.h!=null&&lastIv.h>lastIv.iv&&lastIv.h-lastIv.iv<SVC_STEP?lastIv.h:lastIv.iv):null;
     let next=null;
     if(base!=null)next=Math.floor(base/step)*step+step;else if(lastR)next=Math.floor(lastR.h/step)*step+step;
     let dueIn=null,dueDate=null;
@@ -52,12 +53,14 @@ function svBuild(machines){
     let status,rank;
     if(!lastR){status="No hours on file";rank=8}
     else if(!lastIv){status="No service on file";rank=7}
-    else if(est>=next+step){status="Long overdue";rank=5}
-    else if(est>=next){status="Due now";rank=0}
+    /* "Due now" and "Long overdue" only from hours recorded on a job card; estimates never decide these */
+    else if(lastR.h>=next+step){status="Long overdue";rank=5}
+    else if(lastR.h>=next){status="Due now";rank=0}
+    else if(est>=next){status="Ask for hours";rank=10}
     else if(dueIn==null){status="Usage unknown";rank=6}
-    else if(dueIn<=30){status="Due in 30 days";rank=1}
-    else if(dueIn<=60){status="Due in 60 days";rank=2}
-    else if(dueIn<=90){status="Due in 90 days";rank=3}
+    else if(dueIn<=30){status="Est. due in 30 days";rank=1}
+    else if(dueIn<=60){status="Est. due in 60 days";rank=2}
+    else if(dueIn<=90){status="Est. due in 90 days";rank=3}
     else{status="Later";rank=4}
     const pur=svDate(m.purchased),ext=!!m.extWarranty;
     let wEnd=pur?svAddMonths(pur,ext?SVC_EXT_MONTHS:SVC_STD_MONTHS):null,wBy="date";
@@ -65,7 +68,7 @@ function svBuild(machines){
       if(lastR.h>=SVC_EXT_HOURS){const hit=reads.find(r=>r.h>=SVC_EXT_HOURS);if(hit&&hit.d<wEnd){wEnd=hit.d;wBy="hours"}}
       else if(rate>0){const d=svISO(today+Math.ceil((SVC_EXT_HOURS-est)/rate));if(d<wEnd){wEnd=d;wBy="hours"}}}
     const wLeft=wEnd?svDay(wEnd)-today:null;
-    return {id:m._id,c:m.customer||"",i:m.item||"",s:m.serial||"",model:x.model,lastS,lastIv,lastR,rate,est,seen,step,next,kind:next!=null?svKind(next):null,over:next!=null&&est!=null?est-next:null,ext,wBy,
+    return {id:m._id,c:m.customer||"",i:m.item||"",s:m.serial||"",model:x.model,lastS,lastIv,lastR,rate,est,seen,step,next,kind:next!=null?svKind(next):null,over:next!=null&&lastR?lastR.h-next:null,ext,wBy,
       dueIn,dueDate,status,rank,stale,sold:!!m.sold,inactive:!!m.inactive,pur,wEnd,wLeft,wJobs:x.warrantyJobs,lastJob:x.lastJob,nSvc:svcs.length}
   });
   return rows;
@@ -75,7 +78,7 @@ function svFor(m){return svBuild([m])[0]||null}
 const svCover=r=>r.ext?"Extended (wet parts)":"Standard";
 
 /* ---------- views ---------- */
-const svChip=r=>`<span class="chip ${r.rank<=3||r.rank==5?"":"src"}" style="margin-left:0${r.rank==0?";background:var(--accent-soft);color:var(--accent)":""}">${esc(r.status)}</span>`;
+const svChip=r=>`<span class="chip ${r.rank<=3||r.rank==5||r.rank==10?"":"src"}" style="margin-left:0${r.rank==0?";background:var(--accent-soft);color:var(--accent)":""}" title="${r.rank==10?"The estimate has passed the service, but the last recorded hours have not. Phone the client for the hour meter reading.":r.rank>=1&&r.rank<=3?"Estimated from the machine's hours per day":""}">${esc(r.status)}</span>`;
 const svH=n=>n==null?"—":fmtH(Math.round(n));
 function svFilter(rows){const q=SVC.q.trim().toLowerCase();if(!q)return rows;const w=q.split(/\s+/);return rows.filter(r=>{const h=[r.c,r.i,r.s].join(" ").toLowerCase();return w.every(x=>h.includes(x))})}
 function svList(){
@@ -95,9 +98,10 @@ function svcHTML(loading){
   const cnt=f=>act.filter(f).length,wa=all.filter(r=>r.wEnd&&r.wLeft>=0&&!r.sold);
   const tabs=[["due","Due for service"],["long","Long overdue"],["warranty","Warranty"],["all","All machines"]];
   let html=head+`<div class="stats">
-   <div><b class="num">${cnt(r=>r.rank==0)}</b><span>due now</span></div>
-   <div><b class="num">${cnt(r=>r.rank==1)}</b><span>due in 30 days</span></div>
-   <div><b class="num">${cnt(r=>r.rank==2)}</b><span>due in 31–60 days</span></div>
+   <div><b class="num">${cnt(r=>r.rank==0)}</b><span>due now (recorded hours)</span></div>
+   <div><b class="num">${cnt(r=>r.rank==10)}</b><span>ask for hours</span></div>
+   <div><b class="num">${cnt(r=>r.rank==1)}</b><span>est. due in 30 days</span></div>
+   <div><b class="num">${cnt(r=>r.rank==2)}</b><span>est. due in 31–60 days</span></div>
    <div><b class="num">${cnt(r=>r.rank==5)}</b><span>long overdue</span></div>
    <div><b class="num">${wa.length}</b><span>in warranty</span></div>
    <div><b class="num">${wa.filter(r=>r.wLeft<=90).length}</b><span>warranty ends in 90 days</span></div></div>
@@ -114,24 +118,24 @@ function svcHTML(loading){
     html+=`<div class="tablebox"><table><thead><tr><th>KLIENT</th><th>MASJIEN</th><th>AANGEKOOP</th><th>COVER</th><th>WARRANTY ENDS</th><th class="r">DAYS LEFT</th><th class="r">EST. HOURS</th><th class="r">WARRANTY JOBS</th></tr></thead><tbody>`+
       shown.map(r=>`<tr class="rrow" data-m="${esc(r.id)}" tabindex="0"><td><b>${esc(r.c)}</b><br><span class="num" style="color:var(--muted);font-size:12px">${esc(r.s||"no serial")}</span></td><td>${esc(r.i)}</td><td class="num">${fmtD(r.pur)}</td><td>${r.ext?`<span class="chip ok" style="margin-left:0">Extended</span><br><span style="color:var(--muted);font-size:12px">wet parts</span>`:"Standard"}</td><td class="num">${fmtD(r.wEnd)}${r.wBy=="hours"?`<br><span style="color:var(--muted);font-size:12px">at 4 000 h</span>`:""}${r.wLeft<=90?` <span class="chip">Ends soon</span>`:""}</td><td class="r num">${r.wLeft}</td><td class="r num">${svH(r.est)}</td><td class="r num">${r.wJobs||""}</td></tr>`).join("")+`</tbody></table></div>`;
   }else{
-    html+=`<div class="tablebox"><table><thead><tr><th>KLIENT</th><th>MASJIEN</th><th>LAST SERVICE</th><th class="r">LAST HOURS</th><th class="r">HRS/DAY</th><th class="r">EST. NOW</th><th class="r">NEXT</th><th>DUE</th></tr></thead><tbody>`+
+    html+=`<div class="tablebox"><table><thead><tr><th>KLIENT</th><th>MASJIEN</th><th>LAST SERVICE</th><th class="r">LAST HOURS</th><th class="r">HRS/DAY</th><th class="r">EST. TODAY</th><th class="r">NEXT</th><th>DUE</th></tr></thead><tbody>`+
       shown.map(r=>`<tr class="rrow" data-m="${esc(r.id)}" tabindex="0"><td><b>${esc(r.c)}</b><br><span class="num" style="color:var(--muted);font-size:12px">${esc(r.s||"no serial")}</span></td><td>${esc(r.i)}</td>
        <td>${r.lastS?`<span class="num">${fmtD(r.lastS.d)}</span><br><span style="color:var(--muted);font-size:12px">${r.lastS.iv?fmtH(r.lastS.iv)+" h service":"service"} · J/C ${esc(r.lastS.jc??"—")}</span>`:`<span style="color:var(--muted)">None on file</span>`}</td>
        <td class="r num">${r.lastR?fmtH(r.lastR.h)+`<br><span style="color:var(--muted);font-size:12px">${fmtD(r.lastR.d)}</span>`:"—"}</td>
-       <td class="r num">${r.rate?r.rate.toFixed(1):"—"}</td><td class="r num">${svH(r.est)}</td>
+       <td class="r num">${r.rate?r.rate.toFixed(1):"—"}</td><td class="r num" style="color:var(--muted)">${r.est!=null?"≈ "+svH(r.est):"—"}</td>
        <td class="r num">${r.next!=null?fmtH(r.next)+" h"+`<br><span style="color:${r.kind=="major"?"var(--accent)":"var(--muted)"};font-size:12px;font-family:var(--body);font-weight:${r.kind=="major"?600:400}">${r.kind=="major"?"Major":"Normal"}</span>`:"—"}</td>
-       <td>${svChip(r)}${(r.rank==0||r.rank==5)&&r.over>0?`<br><span style="color:var(--muted);font-size:12px">${fmtH(Math.round(r.over))} h past</span>`:r.dueDate&&r.rank<5?`<br><span class="num" style="color:var(--muted);font-size:12px">≈ ${fmtD(r.dueDate)}</span>`:""}</td></tr>`).join("")+`</tbody></table></div>`;
+       <td>${svChip(r)}${(r.rank==0||r.rank==5)&&r.over>=0?`<br><span style="color:var(--muted);font-size:12px">recorded ${fmtH(r.lastR.h)} h</span>`:r.rank==10?`<br><span style="color:var(--muted);font-size:12px">last recorded ${fmtH(r.lastR.h)} h</span>`:r.dueDate&&r.rank<5?`<br><span class="num" style="color:var(--muted);font-size:12px">≈ ${fmtD(r.dueDate)}</span>`:""}</td></tr>`).join("")+`</tbody></table></div>`;
   }
   html+=`<p class="note">${list.length>shown.length?`Showing ${shown.length} of ${list.length}. Filter or download the call list to see them all. `:`${list.length} machine${list.length==1?"":"s"}. `}
    ${SVC.tab=="warranty"?`Standard warranty ends 1 year after purchase. Machines marked as having the extended warranty run to 4 years or 4 000 h (estimated from their hour readings), whichever comes first, on wet parts only. Mark the extended warranty on the machine's page in the master register.`
    :SVC.tab=="long"?`More than a full service interval past due, with no later service on our cards. Most of these are probably serviced elsewhere or by the farmer: worth a call.`
-   :`Normal service every 300 h, major service every 1 200 h, counted from the hours on the last service card. Estimates use each machine's own hour readings: phone the customer before booking.`}</p>`;
+   :`Normal service every 300 h, major service every 1 200 h, counted from the hours on the last service card. "Due now" means the hours recorded on a job card have reached the next service. "Ask for hours" means only the estimate has: the last recorded reading is still below the service, so phone the client for the hour meter reading. "Est." dates are forecasts from the machine's hours per day; seasonal machines like combines can be far off.`}</p>`;
   return html;
 }
 function svcMachineBox(m){
   const r=svFor(m);if(!r)return "";
   const bits=[r.lastS?`Last service <b class="num">${fmtD(r.lastS.d)}</b>${r.lastS.iv?` (${fmtH(r.lastS.iv)} h)`:""}`:"No service on file",
-    r.est!=null?`Est. hours now <b class="num">${fmtH(r.est)}</b>${r.rate?` (${r.rate.toFixed(1)} h/day)`:""}`:"",
+    r.lastR?`Last recorded <b class="num">${fmtH(r.lastR.h)} h</b> (${fmtD(r.lastR.d)})${r.rate&&r.est!=r.lastR.h?`, estimate today ≈ ${fmtH(r.est)} h at ${r.rate.toFixed(1)} h/day`:""}`:"",
     r.next!=null?`Next <b class="num">${fmtH(r.next)} h</b> ${r.kind} service ${svChip(r)}${r.dueDate&&r.rank>0&&r.rank<5?` <span class="num">≈ ${fmtD(r.dueDate)}</span>`:""}`:"",
     r.wEnd?(r.wLeft>=0?`${r.ext?"Extended warranty (wet parts)":"Warranty"} to <b class="num">${fmtD(r.wEnd)}</b>${r.wBy=="hours"?" (4 000 h)":""}`:`${r.ext?"Extended warranty":"Warranty"} ended ${fmtD(r.wEnd)}${r.wBy=="hours"?" (4 000 h)":""}`):(r.ext?"Extended warranty: add the purchase date":"")].filter(Boolean);
   return `<p class="note" style="background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:6px;padding:8px 12px;color:var(--ink)">${bits.join(" · ")}</p>`;
@@ -140,8 +144,8 @@ function svcExportRows(){
   const list=svList();
   const aoa=SVC.tab=="warranty"?[["KLIENT","MASJIEN","S/N","AANGEKOOP","COVER","WARRANTY ENDS","ENDS BY","DAYS LEFT","EST. HOURS NOW","WARRANTY JOBS"],
     ...list.map(r=>[r.c,r.i,r.s,fmtD(r.pur),svCover(r),fmtD(r.wEnd),r.wBy=="hours"?"4 000 h":"date",r.wLeft,r.est,r.wJobs])]
-   :[["KLIENT","MASJIEN","S/N","LAST SERVICE DATE","LAST SERVICE (H)","LAST SERVICE J/C","LAST HOURS","LAST HOURS DATE","HRS/DAY","EST. HOURS NOW","NEXT SERVICE (H)","SERVICE TYPE","STATUS","EST. DUE DATE","HOURS PAST DUE"],
-    ...list.map(r=>[r.c,r.i,r.s,r.lastS?fmtD(r.lastS.d):"",r.lastS?.iv??"",r.lastS?.jc??"",r.lastR?.h??"",r.lastR?fmtD(r.lastR.d):"",r.rate?+r.rate.toFixed(2):"",r.est??"",r.next??"",r.kind?(r.kind=="major"?"Major":"Normal"):"",r.status,r.dueDate&&r.rank<5?fmtD(r.dueDate):"",(r.rank==0||r.rank==5)&&r.over>0?Math.round(r.over):""])];
+   :[["KLIENT","MASJIEN","S/N","LAST SERVICE DATE","LAST SERVICE (H)","LAST SERVICE J/C","LAST HOURS","LAST HOURS DATE","HRS/DAY","EST. HOURS TODAY (ESTIMATE)","NEXT SERVICE (H)","SERVICE TYPE","STATUS","EST. DUE DATE","RECORDED HOURS PAST DUE"],
+    ...list.map(r=>[r.c,r.i,r.s,r.lastS?fmtD(r.lastS.d):"",r.lastS?.iv??"",r.lastS?.jc??"",r.lastR?.h??"",r.lastR?fmtD(r.lastR.d):"",r.rate?+r.rate.toFixed(2):"",r.est??"",r.next??"",r.kind?(r.kind=="major"?"Major":"Normal"):"",r.status,r.dueDate&&r.rank>=1&&r.rank<=4?fmtD(r.dueDate):"",(r.rank==0||r.rank==5)&&r.over>=0?Math.round(r.over):""])];
   const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=aoa[0].map((h,i)=>({wch:i<2?28:14}));
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,SVC.tab=="warranty"?"Warranty":"Service");
   return {wb,name:`Service_register_${SVC.tab=="warranty"?"warranty":SVC.tab=="due"?"due_"+SVC.days+"_days":"all"}_${todayISO()}.xlsx`};
