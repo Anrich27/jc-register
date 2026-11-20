@@ -65,7 +65,7 @@ function svBuild(machines){
     const wLeft=wEnd?svDay(wEnd)-today:null;
     const stale=!x.lastSeen||today-svDay(x.lastSeen)>548||m.sold||m.inactive;
     return {id:m._id,c:m.customer||"",i:m.item||"",s:m.serial||"",lastS,lastR,next,kind,toGo,status,rank,stale,sold:!!m.sold,inactive:!!m.inactive,
-      ext,pur,wEnd,wBy,wLeft,wJobs:x.warrantyJobs,nSvc:svcs.length}
+      ext,pur,wEnd,wBy,wLeft,wJobs:x.warrantyJobs,nSvc:svcs.length,need:!!m.needHours}
   });
 }
 function svRefresh(machines){SVC.rows=svBuild(machines);SVC.at=Date.now();return SVC.rows}
@@ -133,7 +133,7 @@ function svcHTML(loading){
   }
   html+=`<p class="note">${list.length>shown.length?`Showing ${shown.length} of ${list.length}. Filter or download the call list to see them all. `:`${list.length} machine${list.length==1?"":"s"}. `}
    ${SVC.tab=="warranty"?`Standard warranty ends 1 year after purchase. Machines marked as having the extended warranty run 4 years, or until a recorded reading reaches 4 000 h if that comes first, on wet parts only.`
-   :SVC.tab=="reading"?`The last service card has no hours and no service figure, or there is no hour reading on file. Look up the hours on the portal and add a reading.`
+   :SVC.tab=="reading"?`The last service card has no hours and no service figure, or there is no hour reading on file. These machines are listed in the Review tab of the master register: type the hours from the portal there.`
    :`Next service = the hours the last service was done at + 300 h (first services of 50–150 h are not counted). It is the major service when it reaches or passes the next 1 200 h mark. Status compares the last recorded reading (job card or portal) with the next service. No estimates are used: add a portal reading for an up-to-date status.`}</p>`;
   return html;
 }
@@ -174,8 +174,25 @@ function svParse(text,date){
     return {ok:!low,id:r.id,date,hours:h,msg:low?`${m[1].trim()} (${r.c}): ${fmtH(h)} h is lower than the last reading of ${fmtH(r.lastR.h)} h on ${fmtD(r.lastR.d)}. Check it; not saved.`:`${m[1].trim()} → ${r.c} · ${r.i}: ${fmtH(h)} h on ${fmtD(date)}`};
   });
 }
+/* ---------- hour readings needed: listed in the master register's Review tab ---------- */
+function svcHoursNeeded(){return (SVC.rows||[]).filter(r=>r.need||(r.rank==6&&!r.stale)).sort((a,b)=>a.c.localeCompare(b.c)||a.i.localeCompare(b.i))}
+function svcReviewHTML(){
+  const L=svcHoursNeeded();if(!L.length)return "";
+  const inp="padding:5px 6px;border:1px solid var(--line);border-radius:5px;background:var(--sunk)";
+  return `<div class="fixbox" style="max-width:1240px"><h2>Hours needed from the portal (${L.length})</h2>
+   <p class="sub" style="margin:0 0 8px">For each machine, look up the hours asked for on the portal and type them in. The service register updates as soon as you save.</p>
+   <div style="overflow-x:auto"><table class="ptab"><thead><tr><th>Klient</th><th>Masjien</th><th>Hours needed</th><th>Date</th><th class="r">Hours</th><th></th></tr></thead><tbody>
+   ${L.map(r=>{const onCard=!r.need&&r.lastS&&r.lastS.at==null;
+     return `<tr><td><b>${esc(r.c)}</b>${svMuted(`<span class="num">${esc(r.s||"no serial")}</span>`)}</td><td>${esc(r.i)}</td>
+     <td style="font-size:13px">${onCard?`On the day of the last service: “${esc(r.lastS.t)}”, J/C ${esc(r.lastS.jc??"—")}. The card has no hours.`:r.need?"Current hours (you requested it)":"Current hours (no hour reading on file)"}${r.lastR?svMuted("Last reading on file: "+fmtH(r.lastR.h)+" h on "+fmtD(r.lastR.d)):""}</td>
+     <td>${onCard?`<span class="num">${fmtD(r.lastS.d)}</span>`:`<input data-svrd="${esc(r.id)}" value="${esc(fmtD(todayISO()))}" aria-label="Reading date" style="width:92px;${inp}">`}</td>
+     <td class="r"><input data-svrh="${esc(r.id)}" class="num" placeholder="Hours" aria-label="Hours" style="width:100px;text-align:right;${inp}"></td>
+     <td class="rowact"><button class="btn primary" data-svc="rvsave" data-v="${esc(r.id)}" data-card="${onCard?1:""}">Save</button>${r.need?` <button class="btn ghost" data-svc="rvdrop" data-v="${esc(r.id)}">Remove</button>`:""}</td></tr>`}).join("")}
+   </tbody></table></div></div>`;
+}
 /* events: each app defines svcRender(), svcSave(wb,name) and svcRerenderMachine(); the master register also defines
-   svcCanEdit(), svcAddReadings([{id,date,hours}]) and svcDelReading(machineId, readingId) */
+   svcCanEdit(), svcAddReadings([{id,date,hours}]), svcDelReading(machineId, readingId), svcSetNeed(machineId, on)
+   and svcSetJobHours(machineId, jc, date, hours) */
 document.addEventListener("click",async e=>{const b=e.target.closest("[data-svc]");if(!b||b.tagName=="SELECT"||b.type=="checkbox")return;const k=b.dataset.svc;
   if(k=="tab"){SVC.tab=b.dataset.v;svcRender()}
   else if(k=="export"){if(!window.XLSX)return toast("Excel export isn't available yet. Open the app online once, then try again.");const x=svcExportRows();svcSave(x.wb,x.name)}
@@ -189,6 +206,13 @@ document.addEventListener("click",async e=>{const b=e.target.closest("[data-svc]
   else if(k=="radd"){const d=svDate(document.querySelector("[data-svad]")?.value),h=+String(document.querySelector("[data-svah]")?.value||"").replace(/\s/g,"").replace(",",".");
     if(!d)return toast("Use a date like 20.11.26.");if(!(h>0))return toast("Type the hours from the portal.");
     try{await svcAddReadings([{id:b.dataset.v,date:d,hours:h}]);SVC.add=null;toast("Reading saved");svcRerenderMachine()}catch(_){toast("Couldn't save the reading. Try again.")}}
+  else if(k=="rvsave"){const id=b.dataset.v,q=a=>document.querySelector(`[${a}="${CSS.escape(id)}"]`),d=b.dataset.card?"card":svDate(q("data-svrd")?.value),h=+String(q("data-svrh")?.value||"").replace(/\s/g,"").replace(",",".");
+    if(!d)return toast("Use a date like 20.11.26.");if(!(h>0))return toast("Type the hours from the portal.");
+    const r=(SVC.rows||[]).find(x=>x.id==id);
+    if(b.dataset.card){b.disabled=true;try{await svcSetJobHours(id,r.lastS.jc,r.lastS.d,h);toast(`Hours saved on J/C ${r.lastS.jc}`);svcRerenderMachine()}catch(_){b.disabled=false;toast("Couldn't save the hours. Try again.")}return}
+    if(r&&r.lastR&&h<r.lastR.h)return toast(`${fmtH(h)} h is lower than the last reading of ${fmtH(r.lastR.h)} h. Check it.`);
+    b.disabled=true;try{await svcAddReadings([{id,date:d,hours:h}]);toast("Reading saved");svcRerenderMachine()}catch(_){b.disabled=false;toast("Couldn't save the reading. Try again.")}}
+  else if(k=="rvdrop"){try{await svcSetNeed(b.dataset.v,false);svcRerenderMachine()}catch(_){toast("Couldn't update. Try again.")}}
   else if(k=="rdel"){e.preventDefault();try{await svcDelReading(b.dataset.m2,b.dataset.v);toast("Reading deleted");svcRerenderMachine()}catch(_){toast("Couldn't delete the reading. Try again.")}}
 });
 document.addEventListener("change",e=>{const b=e.target.closest("[data-svc]");if(!b)return;
