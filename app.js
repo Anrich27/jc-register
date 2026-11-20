@@ -176,3 +176,4 @@ const saved=store.get("jcr-pw");if(saved){$("remember").checked=true;unlock(save
 function svcRecalc(){svRefresh(Object.values(S.machines))}
 function svcRender(){if(S.view=="service"&&!S.curId)renderMain()}
 function svcSave(wb,name){XLSX.writeFile(wb,name)}
+function svcRerenderMachine(){renderMain()}
