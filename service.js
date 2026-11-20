@@ -9,12 +9,23 @@
    - "Due now": the last recorded reading has reached the next service; "Due soon": within 50 h of it;
      "Long overdue": a full 300 h or more past it
    - recorded hours = hours on job cards + hour readings entered from the portal (machine.readings)
-   - standard warranty: 1 year from the purchase date
-   - extended warranty (machine marked extWarranty): 4 years, or until a recorded reading reaches 4 000 h if that is sooner;
-     wet parts only (to be confirmed)
+   - warranty (Case IH RSA price list 2026; same terms assumed for 2024-25 purchases), from the AANGEKOOP date: every new
+     machine gets its model's Standard Market Offer (SMO) automatically, ending at the years or the hours limit, whichever
+     comes first (hours = a recorded reading). Models not on the list: 1-year base warranty.
+     DL = ATS (after-treatment system) + driveline + engine; Full = full cover
    Shared by the master register (Claude) and the offline phone copy: keep both copies identical. */
 const SVC={tab:"due",q:"",stale:false,rows:null,at:null,paste:null,add:null};
-const SVC_STEP=300,SVC_MAJOR=1200,SVC_SOON=50,SVC_FIRST_MAX=150,SVC_STD_MONTHS=12,SVC_EXT_MONTHS=48,SVC_EXT_HOURS=4000;
+const SVC_STEP=300,SVC_MAJOR=1200,SVC_SOON=50,SVC_FIRST_MAX=150;
+const SVC_FAM=[/* [model pattern, family, months, hours, cover] */
+ [/\bJX\s*-?\s*45\s*T\b/,"JX45T",24,2000,"Full"],[/\bJX\s*-?\s*(55|75)\s*T\b/,"JX55T / JX75T",24,2000,"Full"],
+ [/\bJX\b.*\bSTRADDLE\b|\bSTRADDLE\b.*\bJX\b/,"JX Straddle",24,2000,"Full"],[/\bJX\b.*HIGH CLEARANCE/,"JX High Clearance",24,2000,"Full"],
+ [/\bJXM\b|\bJX\s*M\s*\d/,"JXM",24,2000,"Full"],[/\bMAXXUM\b/,"Maxxum",24,2000,"DL"],[/\bPUMA\b/,"Puma",36,3000,"DL"],
+ [/\bOPTUM\b/,"Optum",48,4000,"DL"],[/\bMAGNUM\b/,"Magnum",48,4000,"DL"],[/\bQUAD ?TRAC\b|\bSTEIGER\b.*\bQUAD\b/,"Quadtrac",48,4000,"DL"],
+ [/\bSTEIGER\b/,"Steiger",48,4000,"DL"],[/\bAF\s*(9|10)\b/,"Axial-Flow AF9 / AF10",36,1200,"Full"],
+ [/\b(4088|5150|6150|7150|7250|8250|9250|7260|8260|9260)\b/,"Axial-Flow",36,1200,"Full"],
+ [/\bPATRIOT\b.*\b(250|350|3250|4350|4450)\b/,"Patriot",24,2000,"Full"]];
+function svFamily(item){const it=String(item||"").toUpperCase(),f=SVC_FAM.find(f=>f[0].test(it));return f?{name:f[1],months:f[2],hours:f[3],cover:f[4]}:{name:null,months:12,hours:null,cover:"Base"}}
+const svTerms=f=>f.name?`${f.name}: ${f.cover=="DL"?"DL (engine, driveline, ATS)":"Full cover"}, ${f.months/12} years / ${fmtH(f.hours)} h`:"Base warranty: 1 year";
 const svDay=iso=>Math.floor(Date.parse(iso+"T00:00:00Z")/864e5);
 function svDate(s){s=String(s||"").trim();if(/^\d{4}-\d\d-\d\d$/.test(s))return s;
   const m=s.match(/(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})/);if(!m)return null;let y=m[3];if(y.length==2)y=(+y>30?"19":"20")+y;
@@ -59,18 +70,18 @@ function svBuild(machines){
     else if(toGo<=0){status="Due now";rank=0}
     else if(toGo<=SVC_SOON){status="Due soon";rank=1}
     else{status="Not due";rank=4}
-    const pur=svDate(m.purchased),ext=!!m.extWarranty;
-    let wEnd=pur?svAddMonths(pur,ext?SVC_EXT_MONTHS:SVC_STD_MONTHS):null,wBy="date";
-    if(ext&&pur){const hit=reads.find(r=>r.h>=SVC_EXT_HOURS);if(hit&&hit.d<wEnd){wEnd=hit.d;wBy="hours"}}
+    const fam=svFamily(m.item),pur0=svDate(m.purchased),badPur=!!(pur0&&pur0>todayISO()),pur=badPur?null:pur0;
+    let wEnd=pur?svAddMonths(pur,fam.months):null,wBy="date";
+    if(fam.hours&&pur){const hit=reads.find(r=>r.h>=fam.hours);if(hit&&hit.d<wEnd){wEnd=hit.d;wBy=hit.d<=pur?"atPurchase":"hours"}}
     const wLeft=wEnd?svDay(wEnd)-today:null;
     const stale=!x.lastSeen||today-svDay(x.lastSeen)>548||m.sold||m.inactive;
     return {id:m._id,c:m.customer||"",i:m.item||"",s:m.serial||"",lastS,lastR,next,kind,toGo,status,rank,stale,sold:!!m.sold,inactive:!!m.inactive,
-      ext,pur,wEnd,wBy,wLeft,wJobs:x.warrantyJobs,nSvc:svcs.length,need:!!m.needHours}
+      fam,pur,badPur,pur0,wEnd,wBy,wLeft,wJobs:x.warrantyJobs,nSvc:svcs.length,need:!!m.needHours}
   });
 }
 function svRefresh(machines){SVC.rows=svBuild(machines);SVC.at=Date.now();return SVC.rows}
 function svFor(m){return svBuild([m])[0]||null}
-const svCover=r=>r.ext?"Extended (wet parts)":"Standard";
+const svCover=r=>svTerms(r.fam);
 const svCanEdit=()=>typeof svcAddReadings=="function"&&typeof svcCanEdit=="function"&&svcCanEdit();
 
 /* ---------- views ---------- */
@@ -117,13 +128,13 @@ function svcHTML(loading){
   <div class="fs" style="max-width:980px;border-top:0;border-radius:0;display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-top:0">
    <input data-svcq type="search" value="${esc(SVC.q)}" placeholder="Filter by client, model or serial" aria-label="Filter" style="flex:1 1 200px;min-width:0;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--sunk)">
    ${SVC.tab!="warranty"?`<label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)"><input type="checkbox" data-svc="stale" ${SVC.stale?"checked":""}> Include sold, inactive and machines not seen for 18 months</label>`
-     :`<span style="font-size:13px;color:var(--muted)">Standard: 1 year. Extended: 4 years or 4 000 h, wet parts only.</span>`}
+     :`<span style="font-size:13px;color:var(--muted)">Each model's standard offer from the Case IH RSA price list, from the purchase date. Other models: 1 year.</span>`}
   </div>`;
   const shown=list.slice(0,400);
   if(!list.length)return html+`<div class="empty" style="margin-top:12px"><h2>Nothing to show</h2><p>${SVC.tab=="warranty"?"No machines with a purchase date inside the warranty period. Purchase dates come from the AANGEKOOP field on each machine.":"No machines match. Clear the filter or tick the box to include sold and inactive machines."}</p></div>`;
   if(SVC.tab=="warranty"){
     html+=`<div class="tablebox"><table><thead><tr><th>KLIENT</th><th>MASJIEN</th><th>AANGEKOOP</th><th>COVER</th><th>WARRANTY ENDS</th><th class="r">DAYS LEFT</th><th class="r">LAST READING</th><th class="r">WARRANTY JOBS</th></tr></thead><tbody>`+
-      shown.map(r=>`<tr class="rrow" data-m="${esc(r.id)}" tabindex="0"><td><b>${esc(r.c)}</b>${svMuted(`<span class="num">${esc(r.s||"no serial")}</span>`)}</td><td>${esc(r.i)}</td><td class="num">${fmtD(r.pur)}</td><td>${r.ext?`<span class="chip ok" style="margin-left:0">Extended</span>${svMuted("wet parts, 4 000 h")}`:"Standard"}</td><td class="num">${fmtD(r.wEnd)}${r.wBy=="hours"?svMuted("reached 4 000 h"):""}${r.wLeft<=90?` <span class="chip">Ends soon</span>`:""}</td><td class="r num">${r.wLeft}</td><td class="r">${svLastR(r)}</td><td class="r num">${r.wJobs||""}</td></tr>`).join("")+`</tbody></table></div>`;
+      shown.map(r=>`<tr class="rrow" data-m="${esc(r.id)}" tabindex="0"><td><b>${esc(r.c)}</b>${svMuted(`<span class="num">${esc(r.s||"no serial")}</span>`)}</td><td>${esc(r.i)}</td><td class="num">${fmtD(r.pur)}</td><td>${r.fam.name?`<b>${esc(r.fam.name)}</b>${svMuted(`<span style="white-space:nowrap">${r.fam.cover} · ${r.fam.months/12} yrs / ${fmtH(r.fam.hours)} h</span>`)}`:`Base${svMuted("1 year")}`}</td><td class="num">${fmtD(r.wEnd)}${r.wBy=="hours"?svMuted(`reached ${fmtH(r.fam.hours)} h`):r.fam.hours?svMuted(`or at ${fmtH(r.fam.hours)} h`):""}${r.wLeft<=90?` <span class="chip">Ends soon</span>`:""}</td><td class="r num">${r.wLeft}</td><td class="r">${svLastR(r)}</td><td class="r num">${r.wJobs||""}</td></tr>`).join("")+`</tbody></table></div>`;
   }else{
     html+=`<div class="tablebox"><table><thead><tr><th>KLIENT</th><th>MASJIEN</th><th>LAST SERVICE</th><th class="r">LAST READING</th><th class="r">NEXT SERVICE</th><th>STATUS</th></tr></thead><tbody>`+
       shown.map(r=>`<tr class="rrow" data-m="${esc(r.id)}" tabindex="0"><td><b>${esc(r.c)}</b>${svMuted(`<span class="num">${esc(r.s||"no serial")}</span>`)}</td><td>${esc(r.i)}</td>
@@ -132,7 +143,7 @@ function svcHTML(loading){
        <td>${svDue(r)}</td></tr>`).join("")+`</tbody></table></div>`;
   }
   html+=`<p class="note">${list.length>shown.length?`Showing ${shown.length} of ${list.length}. Filter or download the call list to see them all. `:`${list.length} machine${list.length==1?"":"s"}. `}
-   ${SVC.tab=="warranty"?`Standard warranty ends 1 year after purchase. Machines marked as having the extended warranty run 4 years, or until a recorded reading reaches 4 000 h if that comes first, on wet parts only.`
+   ${SVC.tab=="warranty"?`Warranty runs from the purchase date (AANGEKOOP). Each model gets its Standard Market Offer from the Case IH RSA extended warranty price list (2026; same terms used for 2024–25 purchases), ending at the years or the hours limit, whichever comes first: the hours limit counts only once a recorded reading reaches it. DL = engine, driveline and ATS (after-treatment system). Models not on the list get the 1-year base warranty.`
    :SVC.tab=="reading"?`The last service card has no hours and no service figure, or there is no hour reading on file. These machines are listed in the Review tab of the master register: type the hours from the portal there.`
    :`Next service = the hours the last service was done at + 300 h (first services of 50–150 h are not counted). It is the major service when it reaches or passes the next 1 200 h mark. Status compares the last recorded reading (job card or portal) with the next service. No estimates are used: add a portal reading for an up-to-date status.`}</p>`;
   return html;
@@ -142,7 +153,7 @@ function svcMachineBox(m){
   const bits=[!r.lastS&&r.next==SVC_STEP?"First service only on file":r.lastS?`Last service <b class="num">${fmtD(r.lastS.d)}</b>${r.lastS.at!=null?` at ${fmtH(r.lastS.at)} h`:" (no hours on card)"}`:"No service on file",
     r.lastR?`Last reading <b class="num">${fmtH(r.lastR.h)} h</b> (${fmtD(r.lastR.d)}, ${esc(r.lastR.src)})`:"No hour reading on file",
     r.next!=null?`Next <b class="num">${fmtH(r.next)} h</b> ${r.kind} service`:"",svDue(r).replace(/<br>/g," "),
-    r.wEnd?(r.wLeft>=0?`${r.ext?"Extended warranty (wet parts)":"Warranty"} to <b class="num">${fmtD(r.wEnd)}</b>${r.ext?" or 4 000 h":""}`:`${r.ext?"Extended warranty":"Warranty"} ended ${fmtD(r.wEnd)}${r.wBy=="hours"?" (4 000 h)":""}`):(r.ext?"Extended warranty: add the purchase date":"")].filter(Boolean);
+    r.wEnd?(r.wLeft>=0?`Warranty (${esc(svTerms(r.fam))}) to <b class="num">${fmtD(r.wEnd)}</b>${r.fam.hours?` or ${fmtH(r.fam.hours)} h`:""}`:r.wBy=="atPurchase"?`No warranty: already over ${fmtH(r.fam.hours)} h when bought (${fmtD(r.pur)}), probably bought used`:`Warranty (${esc(svTerms(r.fam))}) ended ${fmtD(r.wEnd)}${r.wBy=="hours"?` at ${fmtH(r.fam.hours)} h`:""}`):r.badPur?`Warranty: purchase date ${fmtD(r.pur0)} is in the future, check it`:`Warranty: ${esc(svTerms(r.fam))}, no purchase date on file`].filter(Boolean);
   const rd=(m.readings||[]).slice().sort((a,b)=>a.date<b.date?1:-1),ed=svCanEdit();
   return `<div class="note" style="background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:6px;padding:8px 12px;color:var(--ink)">${bits.join(" · ")}
    ${rd.length?`<div style="margin-top:6px;font-size:12px;color:var(--muted)">Portal readings: ${rd.slice(0,6).map(x=>`<span class="num">${fmtD(x.date)} ${fmtH(x.hours)} h</span>${ed?` <a href="#" data-svc="rdel" data-m2="${esc(m._id)}" data-v="${esc(x.id)}" title="Delete this reading">✕</a>`:""}`).join(" · ")}</div>`:""}
@@ -152,7 +163,7 @@ function svcMachineBox(m){
 function svcExportRows(){
   const list=svList();
   const aoa=SVC.tab=="warranty"?[["KLIENT","MASJIEN","S/N","AANGEKOOP","COVER","WARRANTY ENDS","ENDS BY","DAYS LEFT","LAST READING (H)","LAST READING DATE","WARRANTY JOBS"],
-    ...list.map(r=>[r.c,r.i,r.s,fmtD(r.pur),svCover(r),fmtD(r.wEnd),r.wBy=="hours"?"4 000 h reached":"date",r.wLeft,r.lastR?.h??"",r.lastR?fmtD(r.lastR.d):"",r.wJobs])]
+    ...list.map(r=>[r.c,r.i,r.s,fmtD(r.pur),svCover(r),fmtD(r.wEnd),r.wBy=="hours"?`${r.fam.hours} h reached`:"date",r.wLeft,r.lastR?.h??"",r.lastR?fmtD(r.lastR.d):"",r.wJobs])]
    :[["KLIENT","MASJIEN","S/N","LAST SERVICE DATE","LAST SERVICE DONE AT (H)","LAST SERVICE J/C","LAST READING (H)","LAST READING DATE","READING FROM","NEXT SERVICE (H)","SERVICE TYPE","STATUS","HOURS TO GO (- = PAST)"],
     ...list.map(r=>[r.c,r.i,r.s,r.lastS?fmtD(r.lastS.d):"",r.lastS?.at??"",r.lastS?.jc??"",r.lastR?.h??"",r.lastR?fmtD(r.lastR.d):"",r.lastR?.src??"",r.next??"",r.kind?(r.kind=="major"?"Major":"Normal"):"",r.status,r.toGo??""])];
   const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=aoa[0].map((h,i)=>({wch:i<2?28:14}));
