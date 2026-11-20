@@ -126,7 +126,7 @@ function renderMain(){
   if(S.tab=="basic"){
     html+=`<div class="tablebox"><table><thead><tr><th>DATUM</th><th>J/C NOMMER</th><th>BESONDERHEDE</th><th class="r">${unit}</th></tr></thead><tbody>`+
       jobs.map((j,i)=>`<tr><td class="num">${j.date?fmtD(j.date):`<span style="color:var(--muted)">${esc(j.dateRaw||"—")}</span>`}${j.issue?`<br><span class="chip" title="${esc(j.issue)}">Check date</span>`:""}</td><td class="num">${esc(j.jc??"—")}</td>
-      <td>${j.details.length>1?`<ol class="det">${j.details.map(d=>`<li>${esc(d)}</li>`).join("")}</ol>`:esc(j.details[0]||"")}</td>
+      <td>${j.details.length>1?`<ol class="det">${j.details.map(d=>`<li>${esc(d)}</li>`).join("")}</ol>`:esc(j.details[0]||"")}${svcClaimChip(j)}</td>
       <td class="r num">${j.hours!=null?fmtH(j.hours):j.meterRaw?`<span style="color:var(--muted)">${esc(j.meterRaw)}</span>`:"N/A"}${hf[i]?`<br><span class="chip">${hf[i]}</span>`:""}</td></tr>`).join("")+`</tbody></table></div>`;
   }else{
     const wd=jobs.filter(j=>j.detail),spend=r2(wd.reduce((s,j)=>s+(num(j.detail.totals?.total)||0),0));

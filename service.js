@@ -52,7 +52,7 @@ function svCore(m){
     if((iv!=null&&iv<=SVC_FIRST_MAX)||/first service/i.test(line)){firstOnly=true;break}
     svcs.push({d:j.date,jc:j.jc,iv,h,at:h??iv,t:line});break}
   const lastJob=jobs.length?jobs[jobs.length-1].date:null,lastRead=all.length?all[all.length-1].d:null;
-  return {m,jobs,reads,svcs,firstOnly:firstOnly&&!svcs.length,warrantyJobs:jobs.filter(j=>/warrant/i.test((j.details||[]).join(" "))).length,lastSeen:[lastJob,lastRead].filter(Boolean).sort().pop()||null}
+  return {m,jobs,reads,svcs,firstOnly:firstOnly&&!svcs.length,warrantyJobs:jobs.filter(j=>j.claim=="warranty"||j.claim=="extended"||/warrant/i.test((j.details||[]).join(" "))).length,lastSeen:[lastJob,lastRead].filter(Boolean).sort().pop()||null}
 }
 function svBuild(machines){
   const today=svDay(todayISO()),cores=machines.map(svCore).filter(Boolean);
@@ -185,15 +185,22 @@ function svParse(text,date){
     return {ok:!low,id:r.id,date,hours:h,msg:low?`${m[1].trim()} (${r.c}): ${fmtH(h)} h is lower than the last reading of ${fmtH(r.lastR.h)} h on ${fmtD(r.lastR.d)}. Check it; not saved.`:`${m[1].trim()} → ${r.c} · ${r.i}: ${fmtH(h)} h on ${fmtD(date)}`};
   });
 }
-/* ---------- hour readings needed: listed in the master register's Review tab ---------- */
-function svcHoursNeeded(){return (SVC.rows||[]).filter(r=>r.need||(r.rank==6&&!r.stale)).sort((a,b)=>a.c.localeCompare(b.c)||a.i.localeCompare(b.i))}
+/* ---------- job card types (from the card: "CNH" before the customer = warranty, "Extended" at the top, "Parts claim") ---------- */
+const SVC_CLAIMS={warranty:"Warranty",extended:"Extended warranty",parts:"Parts claim"};
+const svcClaimChip=j=>j&&SVC_CLAIMS[j.claim]?` <span class="chip ok" title="Job card type">${SVC_CLAIMS[j.claim]}</span>`:"";
+/* ---------- details needed from Anrich: listed in the master register's Review tab ---------- */
+function svcHoursNeeded(){return (SVC.rows||[]).filter(r=>r.need||r.badPur||(r.rank==6&&!r.stale)).sort((a,b)=>a.c.localeCompare(b.c)||a.i.localeCompare(b.i))}
 function svcReviewHTML(){
   const L=svcHoursNeeded();if(!L.length)return "";
   const inp="padding:5px 6px;border:1px solid var(--line);border-radius:5px;background:var(--sunk)";
-  return `<div class="fixbox" style="max-width:1240px"><h2>Hours needed from the portal (${L.length})</h2>
-   <p class="sub" style="margin:0 0 8px">For each machine, look up the hours asked for on the portal and type them in. The service register updates as soon as you save.</p>
-   <div style="overflow-x:auto"><table class="ptab"><thead><tr><th>Klient</th><th>Masjien</th><th>Hours needed</th><th>Date</th><th class="r">Hours</th><th></th></tr></thead><tbody>
-   ${L.map(r=>{const onCard=!r.need&&r.lastS&&r.lastS.at==null;
+  return `<div class="fixbox" style="max-width:1240px"><h2>Machine details needed (${L.length})</h2>
+   <p class="sub" style="margin:0 0 8px">Hours: look them up on the portal. Purchase dates: check the sales records. The service register updates as soon as you save.</p>
+   <div style="overflow-x:auto"><table class="ptab"><thead><tr><th>Klient</th><th>Masjien</th><th>Needed</th><th>Date</th><th class="r">Hours</th><th></th></tr></thead><tbody>
+   ${L.map(r=>{if(r.badPur&&!r.need&&r.rank!=6)return `<tr><td><b>${esc(r.c)}</b>${svMuted(`<span class="num">${esc(r.s||"no serial")}</span>`)}</td><td>${esc(r.i)}</td>
+     <td style="font-size:13px">Purchase date: the sheet says ${fmtD(r.pur0)}, which is in the future. Type the correct AANGEKOOP date.</td>
+     <td><input data-svrp="${esc(r.id)}" placeholder="dd.mm.yyyy" aria-label="Purchase date" style="width:110px;${inp}"></td><td></td>
+     <td class="rowact"><button class="btn primary" data-svc="rvpur" data-v="${esc(r.id)}">Save</button></td></tr>`;
+     const onCard=!r.need&&r.lastS&&r.lastS.at==null;
      return `<tr><td><b>${esc(r.c)}</b>${svMuted(`<span class="num">${esc(r.s||"no serial")}</span>`)}</td><td>${esc(r.i)}</td>
      <td style="font-size:13px">${onCard?`On the day of the last service: “${esc(r.lastS.t)}”, J/C ${esc(r.lastS.jc??"—")}. The card has no hours.`:r.need?"Current hours (you requested it)":"Current hours (no hour reading on file)"}${r.lastR?svMuted("Last reading on file: "+fmtH(r.lastR.h)+" h on "+fmtD(r.lastR.d)):""}</td>
      <td>${onCard?`<span class="num">${fmtD(r.lastS.d)}</span>`:`<input data-svrd="${esc(r.id)}" value="${esc(fmtD(todayISO()))}" aria-label="Reading date" style="width:92px;${inp}">`}</td>
@@ -203,7 +210,7 @@ function svcReviewHTML(){
 }
 /* events: each app defines svcRender(), svcSave(wb,name) and svcRerenderMachine(); the master register also defines
    svcCanEdit(), svcAddReadings([{id,date,hours}]), svcDelReading(machineId, readingId), svcSetNeed(machineId, on)
-   and svcSetJobHours(machineId, jc, date, hours) */
+   svcSetJobHours(machineId, jc, date, hours) and svcSetPurchased(machineId, isoDate) */
 document.addEventListener("click",async e=>{const b=e.target.closest("[data-svc]");if(!b||b.tagName=="SELECT"||b.type=="checkbox")return;const k=b.dataset.svc;
   if(k=="tab"){SVC.tab=b.dataset.v;svcRender()}
   else if(k=="export"){if(!window.XLSX)return toast("Excel export isn't available yet. Open the app online once, then try again.");const x=svcExportRows();svcSave(x.wb,x.name)}
@@ -223,6 +230,9 @@ document.addEventListener("click",async e=>{const b=e.target.closest("[data-svc]
     if(b.dataset.card){b.disabled=true;try{await svcSetJobHours(id,r.lastS.jc,r.lastS.d,h);toast(`Hours saved on J/C ${r.lastS.jc}`);svcRerenderMachine()}catch(_){b.disabled=false;toast("Couldn't save the hours. Try again.")}return}
     if(r&&r.lastR&&h<r.lastR.h)return toast(`${fmtH(h)} h is lower than the last reading of ${fmtH(r.lastR.h)} h. Check it.`);
     b.disabled=true;try{await svcAddReadings([{id,date:d,hours:h}]);toast("Reading saved");svcRerenderMachine()}catch(_){b.disabled=false;toast("Couldn't save the reading. Try again.")}}
+  else if(k=="rvpur"){const id=b.dataset.v,d=svDate(document.querySelector(`[data-svrp="${CSS.escape(id)}"]`)?.value);
+    if(!d||d>todayISO())return toast("Type the purchase date like 21.02.2024.");
+    b.disabled=true;try{await svcSetPurchased(id,d);toast("Purchase date saved");svcRerenderMachine()}catch(_){b.disabled=false;toast("Couldn't save the date. Try again.")}}
   else if(k=="rvdrop"){try{await svcSetNeed(b.dataset.v,false);svcRerenderMachine()}catch(_){toast("Couldn't update. Try again.")}}
   else if(k=="rdel"){e.preventDefault();try{await svcDelReading(b.dataset.m2,b.dataset.v);toast("Reading deleted");svcRerenderMachine()}catch(_){toast("Couldn't delete the reading. Try again.")}}
 });
